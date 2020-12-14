@@ -454,10 +454,10 @@ def html_newfile():
     '''HTMLファイルを新規作成する'''
 
     filename = base_path / html_file
-    fp = open(filename, 'w', encoding='cp932')
+    fp = open(filename, 'w', encoding='utf-8')
     fp.write("""<html>
 <head>
-<meta http-equiv="Content-Type" content="text/html; charset=x-sjis">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="GENERATOR" content="{} {} {}">
 <title>Dictionary</title>
 </head>
@@ -581,7 +581,7 @@ def conv_honmon(s):
                 result += "</sub>"
                 s = s[6:]
             elif tag == '<1F0A>': # 1F0A: 改行
-                result += "<br>"
+                result += "<br />"
                 s = s[6:]
             elif tag == '<1F0E>': # 1F06: 上添え字開始
                 result += "<sup>"
@@ -684,9 +684,9 @@ def conv_honmon(s):
                 linetop = len(result)
             s = s[1:]
             
-    # 最後の<br>は捨てる
-    if result.endswith('<br>'):
-        result = result[:-4]
+    # 最後の<br />は捨てる
+    if result.endswith('<br />'):
+        result = result[:-6]
     return result
 
 def get_title(s):
@@ -724,7 +724,7 @@ def skipindent(s):
 
 def indentstr(indent):
     '''出力用字下げタグ文字列を作る'''
-    return "&#x1f09;&#x00;&#x{:02X};".format(indent+1)
+    return "<X4081>1F09 {:04X}</X4081>".format(indent+1)
 
 def generate_html_file():
     '''honmon.txtと作業データファイルを突き合わせてHTMLファイルを生成する'''
@@ -789,13 +789,13 @@ def generate_html_file():
             if p == "<1F02>" or p == "<1F03>":
                 # これらはどこにあっても単独で出力する
                 if needbr:
-                    fp.write("<br>\n")
+                    fp.write("<br />\n")
                     needbr = False
                 if p == "<1F02>":
-                    fp.write("&#x1F02;\n")
+                    fp.write("<X4081>1F02</X4081>\n")
                     new_content = True
                 else:
-                    fp.write("&#x1F03;\n")
+                    fp.write("<X4081>1F03</X4081>\n")
                 needbr = False
                 continue
             
@@ -920,7 +920,7 @@ def generate_html_file():
                 continue
 
             if needbr:
-                fp.write("<br>\n")
+                fp.write("<br />\n")
                 needbr = False
 
             if first_dt and not have_preamble:
