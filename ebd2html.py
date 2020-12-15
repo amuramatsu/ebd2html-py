@@ -593,6 +593,7 @@ def compare_position(ip, dp):
 def conv_honmon(s):
     '''本文データを変換する'''
     halfwidth = False
+    fontface = None
     linetop = 0
     result = ""
     
@@ -625,6 +626,12 @@ def conv_honmon(s):
                 s = s[6:]
             elif tag == '<1F11>': # 1F11: 分割禁止終了
                 result += "</nobr>"
+                s = s[6:]
+            elif tag == '<1F12>': # 1F12: 強調開始
+                result += "<b>"
+                s = s[6:]
+            elif tag == '<1F13>': # 1F13: 強調終了
+                result += "</b>"
                 s = s[6:]
             elif tag == '<1F14>': # 1F14 ... 1F15: 色見本
                 # "[色見本]"で置き換える
@@ -678,8 +685,17 @@ def conv_honmon(s):
             elif tag == "<1F61>": # 1F61: 検索キー終了 
                 s = s[6:]
             elif tag == "<1FE0>": # 1FE0 xxxx: 文字修飾開始
+                if s[6:].startswith("<0001>"): # italic
+                    result += "<i>"
+                    fontface = "i"
+                elif s[6:].startswith("<0003>"): # bold
+                    result += "<b>"
+                    fontface = "b"
                 s = s[12:]
             elif tag == "<1FE1>": # 1FE1: 文字修飾終了
+                if fontface:
+                    result += "</{}>".format(fontface)
+                    fontface = None
                 s = s[6:]
             elif tag[1] >= 'A':
                 # 外字
