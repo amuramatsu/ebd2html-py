@@ -103,15 +103,12 @@ zg_orig_eblow = 0    # 元データの全角外字開始コード下位byte
 hg_orig_ebhigh = 0   # 元データの半角外字開始コード上位byte
 hg_orig_eblow = 0    # 元データの半角外字開始コード下位byte
 
-fktitle_start_block = 0 # かな見出し開始ブロック番号
-fhtitle_start_block = 0 # 表記見出し開始ブロック番号
-fatitle_start_block = 0 # 英字見出し開始ブロック番号
-fktitle_data = None
-fhtitle_data = None
-fatitle_data = None
-fkindex_data = None
-fhindex_data = None
-faindex_data = None
+fktitle_data = None # かな見出しデータ
+fhtitle_data = None # 表記見出しデータ
+fatitle_data = None # 英字見出しデータ
+fkindex_data = None # かなインデックスデータ
+fhindex_data = None # 表記インデックスデータ
+faindex_data = None # 英字インデックスデータ
 
 gen_kana = False       # かなインデックスを作る
 gen_hyoki = False      # 表記インデックスを作る
@@ -349,9 +346,7 @@ def convert_index_data(ifp):
 
 def convert_title_data(fp):
     '''見出しデータを変換する'''
-    first = True
     firsterr = True
-    start_block = 0
     result = {}
     TITLE_RE = re.compile(r'\[([\da-fA-F]+):( *[\da-fA-F]+)\]')
     
@@ -373,18 +368,14 @@ def convert_title_data(fp):
         if (line == '' or
             line.startswith("<1F02>") or line.startswith("<1F03>")):
             continue
-        if first:
-            start_block = tblk
-            first = False
         if line.endswith("<1F0A>"):
             line = line[:-6]
-        pos = (tblk - start_block) * 2048 + tpos
+        pos = tblk * 2048 + tpos
         result[pos] = conv_title(line)
-    return start_block, result
+    return result
 
 def generate_work_file():
     '''インデックスおよび見出しの作業データファイルを生成する'''
-    global fktitle_start_block, fhtitle_start_block, fatitle_start_block
     global fkindex_data, fhindex_data, faindex_data
     global fktitle_data, fhtitle_data, fatitle_data
 
@@ -403,7 +394,7 @@ def generate_work_file():
     if Path(FKTITLE_FILE).exists():
         with open(FKTITLE_FILE, "r", encoding='cp932') as fp:
             message("かな見出しデータを生成しています...")
-            fktitle_start_block, fktitle_data = convert_title_data(fp)
+            fktitle_data = convert_title_data(fp)
             message(" 終了しました\n")
 
     if Path(FHINDEX_FILE).exists():
@@ -421,7 +412,7 @@ def generate_work_file():
     if Path(FHTITLE_FILE).exists():
         with open(FHTITLE_FILE, "r", encoding='cp932') as fp:
             message("表記見出しデータを生成しています...")
-            fhtitle_start_block, fhtitle_data = convert_title_data(fp)
+            fhtitle_data = convert_title_data(fp)
             message(" 終了しました\n");
 
     if Path(FAINDEX_FILE).exists():
@@ -439,7 +430,7 @@ def generate_work_file():
     if Path(FATITLE_FILE).exists():
         with open(FATITLE_FILE, "r", encoding='cp932') as fp:
             message("英字見出しデータを生成しています...")
-            fatitle_start_block, fatitle_data = convert_title_data(fp)
+            fatitle_data = convert_title_data(fp)
             message(" 終了しました\n");
 
 def html_newfile():
@@ -466,7 +457,7 @@ def html_close(fp):
     fp.close()
 
 class IndexAndTitle:
-    def __init__(self, index, title, topblk):
+    def __init__(self, index, title):
         self.pos = 0
         self.ind_dblk = index.dblk.values
         self.ind_dpos = index.dpos.values
@@ -474,7 +465,6 @@ class IndexAndTitle:
         self.ind_tpos = index.tpos.values
         self.ind_text = index.text.values
         self.title = title
-        self.topblk = topblk
 
     def read_data(self):
         '''インデックスと見出しを1件読む'''
@@ -494,7 +484,7 @@ class IndexAndTitle:
             # 見出しデータは本文の見出し行を共用する(広辞苑第五版)
             pass
         else:
-            pos = (ip['tblk'] - self.topblk) * 2048 + ip['tpos']
+            pos = ip['tblk'] * 2048 + ip['tpos']
             ip['title'] = self.title[pos]
         return ip
         
@@ -726,26 +716,24 @@ def generate_html_file():
     '''honmon.txtと作業データファイルを突き合わせてHTMLファイルを生成する'''
     global fkindex_data, fhindex_data, faindex_data
     global fktitle_data, fhtitle_data, fatitle_data
+    global gen_kana, gen_hyoki, gen_alpha
     fp = html_newfile()
     
     with open(HONMON_FILE, "r", encoding='cp932') as honfp: 
         kdata = None
         if fkindex_data is not None:
             gen_kana = True
-            kdata = IndexAndTitle(
-                fkindex_data, fktitle_data, fktitle_start_block)
+            kdata = IndexAndTitle(fkindex_data, fktitle_data)
 
         hdata = None
         if fhindex_data is not None:
             gen_hyoki = True
-            hdata = IndexAndTitle(
-                fhindex_data, fhtitle_data, fhtitle_start_block)
+            hdata = IndexAndTitle(fhindex_data, fhtitle_data)
 
         adata = None
         if faindex_data is not None:
             gen_alpha = True
-            adata = IndexAndTitle(
-                faindex_data, fatitle_data, fatitle_start_block)
+            adata = IndexAndTitle(faindex_data, fatitle_data)
 
         if kdata is None and hdata is None and adata is None:
             message("かな/表記/英字いずれのインデックス/見出しもありません\n");
