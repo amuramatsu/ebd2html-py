@@ -8,6 +8,7 @@ import sys
 import os
 import re
 import configparser
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
@@ -68,18 +69,12 @@ def message(s):
 MAX_HLINE = 256 # HTMLファイルのおよその最大長
 
 FKINDEX_FILE = "fkindex.txt" # かなインデックスダンプデータ
-FKINDEX_WORK = "fkindex.tmp" # かなインデックス一時ファイル
-FKINDEX_DATA = "fkindex.dat" # ソート済みかなインデックス
 FKTITLE_FILE = "fktitle.txt" # かな見出しダンプデータ
 
 FHINDEX_FILE = "fhindex.txt" # 表記インデックスダンプデータ
-FHINDEX_WORK = "fhindex.tmp" # 表記インデックス一時ファイル
-FHINDEX_DATA = "fhindex.dat" # ソート済み表記インデックス
 FHTITLE_FILE = "fhtitle.txt" # 表記見出しダンプデータ
 
 FAINDEX_FILE = "faindex.txt" # 英字インデックスダンプデータ
-FAINDEX_WORK = "faindex.tmp" # 英字インデックス一時ファイル
-FAINDEX_DATA = "faindex.dat" # ソート済み英字インデックス
 FATITLE_FILE = "fatitle.txt" # 英字見出しダンプデータ
 
 ZGAIJI_FILE = "zgaiji.txt" # 全角16ドット外字ダンプデータ
@@ -114,6 +109,9 @@ fatitle_start_block = 0 # 英字見出し開始ブロック番号
 fktitle_data = None
 fhtitle_data = None
 fatitle_data = None
+fkindex_data = None
+fhindex_data = None
+faindex_data = None
 
 gen_kana = False       # かなインデックスを作る
 gen_hyoki = False      # 表記インデックスを作る
@@ -289,7 +287,7 @@ def conv_title(s):
         s = s[1:]
     return result
 
-def convert_index_data(ifp, ofp):
+def convert_index_data(ifp):
     '''インデックスデータを変換する'''
     firsterr = True
     complex = False
@@ -307,6 +305,7 @@ def convert_index_data(ifp, ofp):
     else:
         raise Exception()
     
+    result = []
     for line in ifp:
         line = line.rstrip("\r\n")
         if line == '' or line.startswith("block#") or line.startswith("ID="):
@@ -341,8 +340,12 @@ def convert_index_data(ifp, ofp):
             tpos = 0;
             tblk += 1
         line = line[:line.index('[')]
-        ofp.write("{:08X}|{:04X}|{:08X}|{:04X}|{}|\n".format(
-            dblk, dpos, tblk, tpos, conv_title(line)))
+        result.append({
+            "dblk": dblk, "dpos": dpos,
+            "tblk": tblk, "tpos": tpos,
+            "text": conv_title(line)
+        })
+    return pd.DataFrame(result)
 
 def convert_title_data(fp):
     '''見出しデータを変換する'''
@@ -377,35 +380,24 @@ def convert_title_data(fp):
             line = line[:-6]
         pos = (tblk - start_block) * 2048 + tpos
         result[pos] = conv_title(line)
-        if result[pos] in ("エイ", "ラ"):
-            print("{}: {}".format(pos, result[pos]))
     return start_block, result
-
-def sort_file(infile, outfile):
-    tmp = []
-    with open(infile, 'r') as infile:
-        for line in infile:
-            tmp.append(line)
-    tmp.sort()
-    with open(outfile, 'w', encoding='utf-8') as outfile:
-        for line in tmp:
-            outfile.write(line)
 
 def generate_work_file():
     '''インデックスおよび見出しの作業データファイルを生成する'''
     global fktitle_start_block, fhtitle_start_block, fatitle_start_block
+    global fkindex_data, fhindex_data, faindex_data
     global fktitle_data, fhtitle_data, fatitle_data
 
     if Path(FKINDEX_FILE).exists():
-        with open(FKINDEX_FILE, "r", encoding='cp932') as ifp,\
-             open(FKINDEX_WORK, "w") as ofp:
+        with open(FKINDEX_FILE, "r", encoding='cp932') as ifp:
             message("かなインデックスデータを変換しています...")
-            convert_index_data(ifp, ofp)
+            fkindex_data = convert_index_data(ifp)
             message(" 終了しました\n")
 
         message("かなインデックスデータをソートしています...")
-        sort_file(FKINDEX_WORK, FKINDEX_DATA)
-        os.remove(FKINDEX_WORK)
+        fkindex_data.sort_values(
+            by=["dblk", "dpos", "tblk", "tpos", "text"],
+            inplace=True, ignore_index=True)
         message(" 終了しました\n")
 
     if Path(FKTITLE_FILE).exists():
@@ -415,38 +407,38 @@ def generate_work_file():
             message(" 終了しました\n")
 
     if Path(FHINDEX_FILE).exists():
-        with open(FHINDEX_FILE, "r", encoding='cp932') as ifp,\
-             open(FHINDEX_WORK, "w") as ofp:
+        with open(FHINDEX_FILE, "r", encoding='cp932') as ifp:
             message("表記インデックスデータを変換しています...")
-            convert_index_data(ifp, ofp)
+            fhindex_data = convert_index_data(ifp)
             message(" 終了しました\n")
         
         message("表記インデックスデータをソートしています...");
-        sort_file(FHINDEX_WORK, FHINDEX_DATA)
-        os.remove(FHINDEX_WORK)
+        fhindex_data.sort_values(
+            by=["dblk", "dpos", "tblk", "tpos", "text"],
+            inplace=True, ignore_index=True)
         message(" 終了しました\n")
 
     if Path(FHTITLE_FILE).exists():
         with open(FHTITLE_FILE, "r", encoding='cp932') as fp:
-            message("表記見出し作業データを生成しています...")
+            message("表記見出しデータを生成しています...")
             fhtitle_start_block, fhtitle_data = convert_title_data(fp)
             message(" 終了しました\n");
 
     if Path(FAINDEX_FILE).exists():
-        with open(FAINDEX_FILE, "r", encoding='cp932') as ifp,\
-             open(FAINDEX_WORK, "w") as ofp:
+        with open(FAINDEX_FILE, "r", encoding='cp932') as ifp:
             message("英字インデックスデータを変換しています...")
-            convert_index_data(ifp, ofp)
+            faindex_data = convert_index_data(ifp)
             message(" 終了しました\n")
 
         message("英字インデックスデータをソートしています...")
-        sort_file(FAINDEX_WORK, FAINDEX_DATA)
-        os.remove(FAINDEX_WORK)
+        faindex_data.sort_values(
+            by=["dblk", "dpos", "tblk", "tpos", "text"],
+            inplace=True, ignore_index=True)
         message(" 終了しました\n")
 
     if Path(FATITLE_FILE).exists():
         with open(FATITLE_FILE, "r", encoding='cp932') as fp:
-            message("英字見出し作業データを生成しています...")
+            message("英字見出しデータを生成しています...")
             fatitle_start_block, fatitle_data = convert_title_data(fp)
             message(" 終了しました\n");
 
@@ -473,35 +465,36 @@ def html_close(fp):
     fp.write("</html>\n")
     fp.close()
 
-def read_index_data(fp, data, topblk):
-    '''インデックスと見出しを1件読む'''
-    line = fp.readline()
-    line = line.rstrip("\r\n")
-    if line == "":
-        return None
-    m = re.search(
-        r'([\da-fA-F]+)\|([\da-fA-F]+)\|' +
-        r'([\da-fA-F]+)\|([\da-fA-F]+)\|([^|]+)\|',
-        line)
-    if m is None:
-        return None
+class IndexAndTitle:
+    def __init__(self, index, title, topblk):
+        self.pos = 0
+        self.index = index
+        self.title = title
+        self.topblk = topblk
 
-    ip = {
-        'dblk': int(m.group(1), 16),
-        'dpos': int(m.group(2), 16),
-        'tblk': int(m.group(3), 16),
-        'tpos': int(m.group(4), 16),
-        'text': m.group(5),
-        'title': "",
-    }
-    if ip['dblk'] == ip['tblk'] and ip['dpos'] == ip['tpos']:
-        # 見出しデータは本文の見出し行を共用する(広辞苑第五版)
-        pass
-    else:
-        pos = (ip['tblk'] - topblk) * 2048 + ip['tpos']
-        ip['title'] = data[pos]
-    return ip
-
+    def read_data(self):
+        '''インデックスと見出しを1件読む'''
+        
+        if self.pos >= len(self.index):
+            return None
+        r = self.index.iloc[self.pos]
+        self.pos += 1
+        ip = {
+            'dblk': r.dblk,
+            'dpos': r.dpos,
+            'tblk': r.tblk,
+            'tpos': r.tpos,
+            'text': r.text,
+            'title': "",
+        }
+        if ip['dblk'] == ip['tblk'] and ip['dpos'] == ip['tpos']:
+            # 見出しデータは本文の見出し行を共用する(広辞苑第五版)
+            pass
+        else:
+            pos = (ip['tblk'] - self.topblk) * 2048 + ip['tpos']
+            ip['title'] = self.title[pos]
+        return ip
+        
 def read_honmon_data(fp):
     '''本文を1行読む'''
     line = fp.readline()
@@ -728,34 +721,30 @@ def indentstr(indent):
 
 def generate_html_file():
     '''honmon.txtと作業データファイルを突き合わせてHTMLファイルを生成する'''
+    global fkindex_data, fhindex_data, faindex_data
+    global fktitle_data, fhtitle_data, fatitle_data
     fp = html_newfile()
     
     with open(HONMON_FILE, "r", encoding='cp932') as honfp: 
-        gen_kana = False
-        kifp = None
-        try:
-            kifp = open(FKINDEX_DATA, "r")
+        kdata = None
+        if fkindex_data is not None:
             gen_kana = True
-        except:
-            pass
+            kdata = IndexAndTitle(
+                fkindex_data, fktitle_data, fktitle_start_block)
 
-        gen_hyoki = False
-        hifp = None
-        try:
-            hifp = open(FHINDEX_DATA, "r")
+        hdata = None
+        if fhindex_data is not None:
             gen_hyoki = True
-        except:
-            pass
+            hdata = IndexAndTitle(
+                fhindex_data, fhtitle_data, fhtitle_start_block)
 
-        gen_alpha = False
-        aifp = None
-        try:
-            aifp = open(FAINDEX_DATA, "r")
+        adata = None
+        if faindex_data is not None:
             gen_alpha = True
-        except:
-            pass
+            adata = IndexAndTitle(
+                faindex_data, fatitle_data, fatitle_start_block)
 
-        if not (gen_kana or gen_hyoki or gen_alpha):
+        if kdata is None and hdata is None and adata is None:
             message("かな/表記/英字いずれのインデックス/見出しもありません\n");
             message("HTMLファイルの生成を中止します\n");
             raise Exception()
@@ -769,15 +758,12 @@ def generate_html_file():
         kp = None
         hp = None
         ap = None
-        if gen_kana:
-            ktop = fktitle_start_block;
-            kp = read_index_data(kifp, fktitle_data, ktop)
-        if gen_hyoki:
-            htop = fhtitle_start_block;
-            hp = read_index_data(hifp, fhtitle_data, htop)
-        if gen_alpha:
-            atop = fatitle_start_block
-            ap = read_index_data(aifp, fatitle_data, atop)
+        if kdata is not None:
+            kp = kdata.read_data()
+        if hdata is not None:
+            hp = hdata.read_data()
+        if adata is not None:
+            ap = adata.read_data()
 
         while True:
             dp = read_honmon_data(honfp)
@@ -835,7 +821,7 @@ def generate_html_file():
                          "インデックス=[{:08X}:{:04X}]{}\n").format(
                              dp['dblk'], dp['dpos'],
                              kp['dblk'], kp['dpos'], kp['text']))
-                kp = read_index_data(kifp, fktitle_data, ktop)
+                kp = kdata.read_data()
 
             while hp and compare_position(hp, dp) < 0:
                 message("使われない表記インデックスがあります\n");
@@ -843,7 +829,7 @@ def generate_html_file():
                          "インデックス=[{:08X}:{:04X}]{}\n").format(
                              dp['dblk'], dp['dpos'],
                              hp['dblk'], hp['dpos'], hp['text']))
-                hp = read_index_data(hifp, fhtitle_data, htop)
+                hp = hdata.read_data()
 
             while ap and compare_position(ap, dp) < 0:
                 message("使われない英字インデックスがあります\n");
@@ -851,7 +837,7 @@ def generate_html_file():
                          "インデックス=[{:08X}:{:04X}]{}\n").format(
                              dp['dblk'], dp['dpos'],
                              ap['dblk'], ap['dpos'], ap['text']))
-                ap = read_index_data(aifp, fatitle_data, atop)
+                ap = adata.read_data()
             
             if ((kp and compare_position(kp, dp) == 0) or
                 (hp and compare_position(hp, dp) == 0) or
@@ -885,7 +871,7 @@ def generate_html_file():
                 while kp and compare_position(kp, dp) == 0:
                     fp.write('<key title="{}" type="kana">{}</key>\n'.format(
                         kp['title'] if len(kp['title']) else title, kp['text']))
-                    kp = read_index_data(kifp, fktitle_data, ktop)
+                    kp = kdata.read_data()
 
                 while hp and compare_position(hp, dp) == 0:
                     fp.write('<key title="{}" type="hyoki">{}</key>\n'.format(
@@ -896,12 +882,12 @@ def generate_html_file():
                                 hp['title'] if len(hp['title']) else title,
                                 hp['text']))
                         have_auto_kana = True
-                    hp = read_index_data(hifp, fhtitle_data, htop)
+                    hp = hdata.read_data()
 
                 while ap and compare_position(ap, dp) == 0:
                     fp.write('<key title="{}" type="hyoki">{}</key>\n'.format(
                         ap['title'] if len(ap['title']) else title, ap['str']))
-                    ap = read_index_data(aifp, fatitle_data, atop)
+                    ap = adata.read_data()
 
                 if yield_dt:
                     fp.write("<dd><p>\n")
@@ -931,12 +917,6 @@ def generate_html_file():
             fp.write("{}{}{}{}".format(istr, tbuf, istr2, buf))
             needbr = True
         fp.write("\n")
-        if gen_kana:
-            kifp.close()
-        if gen_hyoki:
-            hifp.close()
-        if gen_alpha:
-            aifp.close()
     html_close(fp)
     message("HTMLファイルの生成が終了しました\n")
 
