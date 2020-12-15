@@ -17,6 +17,17 @@ PROGNAME = "ebd2html-py"
 __VERSION__ = "0.1.0"
 __DATE__ = '2020-12-13'
 
+BOOK_TYPE = {
+    "国語辞典": 0x00,
+    "漢和辞典": 0x10,
+    "英和辞典": 0x20,
+    "和英辞典": 0x30,
+    "現代用語辞典": 0x40,
+    "百科事典": 0x50,
+    "一般書物": 0x60,
+    "類語辞典": 0x70,
+}
+
 LOG_FILE = "ebd2html.log" # ログファイル
 MAX_WORD = 256            # 単語の最大長
 
@@ -93,7 +104,7 @@ book_title = ""    # 書籍タイトル
 book_type = ""     # 書籍種別
 book_dir = ""      # 書籍ディレクトリ名
 html_file = ""     # 生成されるHTMLファイル名
-ebs_file = ""      # 生成されるEBSファイル名
+ebx_file = ""      # 生成されるEBXファイル名
 
 fktitle_data = None # かな見出しデータ
 fhtitle_data = None # 表記見出しデータ
@@ -972,79 +983,129 @@ def generate_html_file():
     html_close(fp)
     message("HTMLファイルの生成が終了しました\n")
 
-def generate_ebs_file():
+def generate_ebx_file():
     '''EBStudio定義ファイルを生成する'''
+    
+    # bit0: forward hyoki
+    # bit1: forward kana
+    # bit2: backward hyoki
+    # bit3: backward kana
+    # bit4: condition
+    # bit5: cross
+    # bit6: complex
+    # bit7: menu
+    index_def = 0
+    if gen_hyoki or gen_alpha:
+        index_def |= 0x05
+    if gen_kana or have_auto_kana:
+        index_def |= 0x0a
 
-    with open(base_path / ebs_file, "w", encoding='cp932') as f:
+    with open(base_path / ebx_file, "w", encoding='utf-8') as f:
         message("EBSファイルを生成しています... ")
-        f.write("InPath={}\n".format(base_path))
-        f.write("OutPath={}\n".format(out_path))
-        f.write("IndexFile=\n")
-        f.write("Copyright=\n")
-        f.write("GaijiFile=$(BASE)\\{}\n".format(GFONT_FILE))
-        f.write("GaijiMapFile=$(BASE)\\{}\n".format(GMAP_FILE))
-        f.write("EBType={}\n".format(eb_type))
-        f.write("WordSearchHyoki={}\n".format(
-            1 if (gen_hyoki or gen_alpha) else 0))
-        f.write("WordSearchKana={}\n".format(
-            1 if (gen_kana or have_auto_kana) else 0))
-        f.write("EndWordSearchHyoki={}\n".format(
-            1 if (gen_hyoki or gen_alpha) else 0))
-        f.write("EndWordSearchKana={}\n".format(
-            1 if (gen_kana or have_auto_kana) else 0))
-        f.write("KeywordSearch=0\n")
-        f.write("ComplexSearch=0\n")
-        f.write("topMenu=0\n")
-        f.write("singleLine=1\n")
-        f.write("kanaSep1=【\n")
-        f.write("kanaSep2=】\n")
-        f.write("hyokiSep=0\n")
-        f.write("makeFig=0\n")
-        f.write("inlineImg=0\n")
-        f.write("paraHdr=0\n")
-        f.write("ruby=1\n")
-        f.write("paraBr=0\n")
-        f.write("subTitle=0\n")
-        f.write("dfnStyle=0\n")
-        f.write("srchUnit=1\n")
-        f.write("linkChar=0\n")
-        f.write("arrowCode=222A\n")
-        f.write("eijiPronon=1\n")
-        f.write("eijiPartOfSpeech=1\n")
-        f.write("eijiBreak=1\n")
-        f.write("eijiKana=0\n")
-        f.write("leftMargin=0\n")
-        f.write("indent=0\n")
-        f.write("tableWidth=480\n")
-        f.write("StopWord=\n")
-        f.write("delBlank=1\n")
-        f.write("delSym=1\n")
-        f.write("delChars=\n")
-        f.write("refAuto=0\n")
-        f.write("titleWord=0\n")
-        f.write("autoWord=0\n")
-        f.write("autoEWord=0\n")
-        f.write("HTagIndex=0\n")
-        f.write("DTTagIndex=1\n")
-        f.write("dispKeyInSelList=0\n")
-        f.write("titleOrder=0\n")
-        f.write("omitHeader=0\n")
-        f.write("addKana=1\n")
-        f.write("autoKana=0\n")
-        f.write("withHeader=0\n")
-        f.write("optMono=0\n")
-        f.write("Size=20000;30000;100;3000000;20000;20000;"+
-                "20000;1000;1000;1000;1000\n")
-        f.write("Book={};{};{};_;".format(book_title, book_dir, book_type))
-        f.write("_;GAI16H00;GAI16F00;_;_;_;_;_;_;\n")
-        f.write("Source=$(BASE)\\{};本文;_;HTML;\n".format(html_file))
+        f.write('''<?xml version="1.0"?>
+<BookSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <booklist>
+    <BookInfo>
+      <source>
+        <SourceInfo>
+          <inFile>$(BASE)/{html_file}</inFile>
+          <title>本文</title>
+          <sourceTypeID>0</sourceTypeID>
+        </SourceInfo>
+      </source>
+      <bookTitle>{book_title}</bookTitle>
+      <dirName>{book_dir}</dirName>
+      <bookTypeID>{book_type:02X}</bookTypeID>
+      <complexDef />
+      <copyright />
+      <gaijiMap>$(BASE)/GaijiMap.xml</gaijiMap>
+      <gaijiFont>$(BASE)/GaijiFont.xml</gaijiFont>
+      <indexFile />
+      <g8x16>GAI16H00</g8x16>
+      <g16x16>GAI16F00</g16x16>
+      <g12x24 />
+      <g24x24 />
+      <g16x30 />
+      <g32x30 />
+      <g24x48 />
+      <g48x48 />
+      <separateMMData>false</separateMMData>
+    </BookInfo>
+  </booklist>
+  <basePath>{base_path}</basePath>
+  <outputPath>{out_path}</outputPath>
+  <ebType>{eb_type}</ebType>
+  <indexDef>{index_def}</indexDef>
+  <convertOpt>
+    <stopWord>a the</stopWord>
+    <delBlank>true</delBlank>
+    <delSym>true</delSym>
+    <delChars />
+    <refAuto>true</refAuto>
+    <titleWord>true</titleWord>
+    <autoWord>false</autoWord>
+    <autoEWord>false</autoEWord>
+    <dispKeyInSelList>false</dispKeyInSelList>
+    <FRAuto>false</FRAuto>
+    <titleOrder>0</titleOrder>
+    <addKana>1</addKana>
+    <autoKana>false</autoKana>
+    <omitHeader>false</omitHeader>
+    <titleLen>128</titleLen>
+    <typeCplxKwd>0</typeCplxKwd>
+    <topMenu>false</topMenu>
+    <singleLine>false</singleLine>
+    <kanaSep1>【</kanaSep1>
+    <kanaSep2>】</kanaSep2>
+    <hyokiSep>true</hyokiSep>
+    <makeFig>true</makeFig>
+    <inlineImg>false</inlineImg>
+    <paraHdr>false</paraHdr>
+    <ruby>true</ruby>
+    <paraBr>false</paraBr>
+    <subTitle>false</subTitle>
+    <dfnStyle>0</dfnStyle>
+    <srchUnit>0</srchUnit>
+    <linkChar>0</linkChar>
+    <arrowCode>222A</arrowCode>
+    <HTagIndex>true</HTagIndex>
+    <HTagMenu>true</HTagMenu>
+    <DTTagIndex>true</DTTagIndex>
+    <leftMargin>1</leftMargin>
+    <indent>0</indent>
+    <tableWidth>480</tableWidth>
+    <kwordLen>1</kwordLen>
+    <delLeadNo>false</delLeadNo>
+    <eijiPronon>true</eijiPronon>
+    <eijiPartOfSpeech>true</eijiPartOfSpeech>
+    <eijiBreak>true</eijiBreak>
+    <eijiKana>false</eijiKana>
+    <eijiYomi>0</eijiYomi>
+    <withHeader>0</withHeader>
+    <optMono>false</optMono>
+    <pdicTitle>0</pdicTitle>
+    <pdicPronon>1</pdicPronon>
+    <pdicHonbun>0</pdicHonbun>
+    <pdicYorei>0</pdicYorei>
+    <maxStringT>32000000</maxStringT>
+  </convertOpt>
+</BookSet>
+'''.format(
+    html_file=html_file,
+    book_title=book_title,
+    book_dir=book_dir,
+    book_type=BOOK_TYPE.get(book_type, 90),
+    base_path=base_path,
+    out_path=out_path,
+    eb_type=eb_type,
+    index_def=index_def))
     message("終了しました\n")
 
 def parse_ini_file():
     '''設定ファイルを読み込む'''
     global base_path, out_path, auto_kana
     global eb_type, book_title, book_type, book_dir
-    global html_file, ebs_file
+    global html_file, ebx_file
 
     config = configparser.ConfigParser()
     config.read(INI_FILE)
@@ -1053,19 +1114,19 @@ def parse_ini_file():
     auto_kana = config['DEFAULT'].getboolean('AUTOKANA')
     eb_type = int(config['DEFAULT']['EBTYPE'])
     book_title = config['DEFAULT']['BOOKTITLE']
-    book_type =  config['DEFAULT']['BOOKTYPE']
-    if book_type not in ("国語辞典", "漢和辞典", "英和辞典", "和英辞典",
-                         "現代用語辞典", "一般書物", "類語辞典"):
+    book_type = config['DEFAULT']['BOOKTYPE']
+    if book_type not in BOOK_TYPE:
         message("未知の書籍種別が指定されています\n")
     book_dir = config['DEFAULT']['BOOKDIR']
     if len(book_dir):
-        message("書籍ディレクトリ名が8バイトを超えています\n")
+        if len(book_dir) > 8:
+            message("書籍ディレクトリ名が8バイトを超えています\n")
         for c in book_dir:
             if c not in string.ascii_uppercase + string.digits + "_":
                 message("書籍ディレクトリ名に不正な文字(A-Z0-9_以外)" +
                         "が含まれています\n")
     html_file = Path(book_dir + ".html")
-    ebs_file = Path(book_dir + ".ebs")
+    ebx_file = Path(book_dir + ".ebx")
 
     message("変換設定は以下のとおりです\n")
     message("  BASEPATH = {}\n".format(base_path))
@@ -1076,7 +1137,7 @@ def parse_ini_file():
     message("  BOOKTYPE = {}\n".format(book_type))
     message("  BOOKDIR = {}\n".format(book_dir))
     message("  生成されるHTMLファイル = {}\n".format(html_file))
-    message("  生成されるEBSファイル = {}\n".format(ebs_file))
+    message("  生成されるEBXファイル = {}\n".format(ebx_file))
 
 def work_directory():
     '''ファイル出力先ディレクトリを作る'''
@@ -1103,7 +1164,7 @@ def term():
     write_log("終了時刻: {}".format(stop_time))
     message("経過時間: {:d}:{:02d}\n".format(int(t // 60), int(t % 60)))
     message("※ {}{} を入力としてEBStudioを実行してください\n".format(
-        base_path, ebs_file))
+        base_path, ebx_file))
     write_log("\n")
 
 def main():
@@ -1113,7 +1174,7 @@ def main():
     generate_gaiji_file()
     generate_work_file()
     generate_html_file()
-    generate_ebs_file()
+    generate_ebx_file()
     term()
 
 if __name__ == "__main__":
