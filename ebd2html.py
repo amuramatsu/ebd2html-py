@@ -468,25 +468,28 @@ def html_close(fp):
 class IndexAndTitle:
     def __init__(self, index, title, topblk):
         self.pos = 0
-        self.index = index
+        self.ind_dblk = index.dblk.values
+        self.ind_dpos = index.dpos.values
+        self.ind_tblk = index.tblk.values
+        self.ind_tpos = index.tpos.values
+        self.ind_text = index.text.values
         self.title = title
         self.topblk = topblk
 
     def read_data(self):
         '''インデックスと見出しを1件読む'''
-        
-        if self.pos >= len(self.index):
+        pos = self.pos
+        if pos >= len(self.ind_text):
             return None
-        r = self.index.iloc[self.pos]
-        self.pos += 1
         ip = {
-            'dblk': r.dblk,
-            'dpos': r.dpos,
-            'tblk': r.tblk,
-            'tpos': r.tpos,
-            'text': r.text,
+            'dblk': self.ind_dblk[pos],
+            'dpos': self.ind_dpos[pos],
+            'tblk': self.ind_tblk[pos],
+            'tpos': self.ind_tpos[pos],
+            'text': self.ind_text[pos],
             'title': "",
         }
+        self.pos += 1
         if ip['dblk'] == ip['tblk'] and ip['dpos'] == ip['tpos']:
             # 見出しデータは本文の見出し行を共用する(広辞苑第五版)
             pass
