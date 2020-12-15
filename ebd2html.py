@@ -8,6 +8,7 @@ import sys
 import os
 import re
 import configparser
+import string
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
@@ -94,15 +95,6 @@ book_dir = ""      # 書籍ディレクトリ名
 html_file = ""     # 生成されるHTMLファイル名
 ebs_file = ""      # 生成されるEBSファイル名
 
-zg_start_unicode = 0 # 全角外字開始Unicodeコード
-hg_start_unicode = 0 # 半角外字開始Unicodeコード
-zg_start_ebhigh = 0  # 全角外字開始ebcode上位byte
-hg_start_ebhigh = 0  # 半角外字開始ebcode上位byte
-zg_orig_ebhigh = 0   # 元データの全角外字開始コード上位byte
-zg_orig_eblow = 0    # 元データの全角外字開始コード下位byte
-hg_orig_ebhigh = 0   # 元データの半角外字開始コード上位byte
-hg_orig_eblow = 0    # 元データの半角外字開始コード下位byte
-
 fktitle_data = None # かな見出しデータ
 fhtitle_data = None # 表記見出しデータ
 fatitle_data = None # 英字見出しデータ
@@ -115,113 +107,172 @@ gen_hyoki = False      # 表記インデックスを作る
 gen_alpha = False      # 英字インデックスを作る
 have_auto_kana = False # auto_kana検索語がある
 
-def generate_gaiji_file():
-    '''外字ダンプファイルからGaiji.xmlとGaijiMap.xmlを作る'''
-    global zg_start_unicode, zg_start_ebhigh
-    global hg_start_unicode, hg_start_ebhigh
-    global zg_orig_ebhigh, zg_orig_eblow
-    global hg_orig_ebhigh, hg_orig_eblow
-
+class Gaiji:
     FONTSET_START_RE = re.compile(
         r'^<fontSet\s.*start="([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})"');
+    GAIJI_UNICODE_FIRST = 0xe000
     
-    with open(base_path / GMAP_FILE, "w", encoding='cp932') as mfp, \
-         open(base_path / GFONT_FILE, "w", encoding='cp932') as ffp:
+    def __init__(self, ebwin_map=None):
+        self.zg_start_unicode = 0 # 全角外字開始Unicodeコード
+        self.hg_start_unicode = 0 # 半角外字開始Unicodeコード
+
+        self.zgaiji2uni = {}
+        self.hgaiji2uni = {}
+        self.zgaiji_data = []
+        self.hgaiji_data = []
+        if ebwin_map:
+            with open(ebwin_map, 'r', encoding='cp932') as f:
+                for line in f:
+                    line = line.rstrip('\r\n')
+                    if line == "" or line[0] == '#':
+                        continue
+                    s = re.split("[ \t]+", line)
+                    if len(s) < 2:
+                        continue
+                    if s[1] == "-" or ',' in s[1]:
+                        continue
+                    ebcode = s[0].lower()
+                    type_ = ebcode[0]
+                    ebcode = int(ebcode[1:], 16)
+                    unicode = int(s[1][1:], 16)
+                    if unicode == 0x20:
+                        continue
+                    if type_ == "z":
+                        self.zgaiji2uni[ebcode] = unicode
+                    else:
+                        self.hgaiji2uni[ebcode] = unicode
+
+    def to_unicode(self, ebcode, halfwidth):
+        if halfwidth:
+            return self.hgaiji2uni.get(ebcode, 0)
+        return self.zgaiji2uni.get(ebcode, 0)
         
-        mfp.write('<?xml version="1.0" encoding="Shift_JIS"?>\n')
-        mfp.write("<gaijiSet>\n")
-        ffp.write('<?xml version="1.0" encoding="Shift_JIS"?>\n')
-        ffp.write('<gaijiData xml:space="preserve">\n')
-        
-        message("外字ファイルを生成しています... ")
-        
+    def load(self, zgaiji, hgaiji):
         first = True
-        zg_start_unicode = 0xe000
-        zg_start_ebhigh = 0xa1
-        with open(ZGAIJI_FILE, "r", encoding='cp932') as fp:
-            unicode_ = zg_start_unicode
-            ebhigh = zg_start_ebhigh
+        self.hg_start_unicode = self.GAIJI_UNICODE_FIRST
+        with open(hgaiji, "r", encoding='cp932') as fp:
+            unicode_ = self.hg_start_unicode
+            ebhigh = 0xa1
             eblow = 0x21
             for line in fp:
                 line = line.rstrip('\r\n')
-                if line == '' or line[0] == ' ' or line[0] == '#':
-                    ffp.write(line + '\n')
+                if line == '' or line[0] in (' ', '#', '.'):
+                    self.hgaiji_data.append(line)
                     continue
 
-                m = FONTSET_START_RE.match(line)
+                m = self.FONTSET_START_RE.match(line)
                 if m:
-                    zg_orig_ebhigh = int(m.group(1), 16)
-                    zg_orig_eblow = int(m.group(2), 16)
+                    ebhigh = int(m.group(1), 16)
+                    eblow = int(m.group(2), 16)
                 if not line.startswith("<fontData"):
                     continue
+                
+                ebcode = ebhigh*256 + eblow
                 if first:
-                    ffp.write('<fontSet size="16X16" ' +
-                              'start="{:02X}{:02X}">\n'.format(ebhigh, eblow))
+                    self.hgaiji_data.append(
+                        '<fontSet size="8X16" start="{:04X}">'.format(ebcode))
                     first = False
                 else:
-                    ffp.write("</fontData>\n")
-                ffp.write(('<fontData ebcode="{:02X}{:02X}" ' +
-                           'unicode="#x{:04X}">\n').format(
-                               ebhigh, eblow, unicode_))
-                mfp.write(('<gaijiMap unicode="#x{:04X}" ' +
-                           'ebcode="{:02X}{:02X}"/>\n').format(
-                               unicode_, ebhigh, eblow))
-                unicode_ += 1
+                    self.hgaiji_data.append("</fontData>")
+                if ebcode not in self.hgaiji2uni:
+                    self.hgaiji2uni[ebcode] = unicode_
+                    unicode_ += 1
+                u = self.hgaiji2uni[ebcode]
+                self.hgaiji_data.append(
+                    '<fontData ebcode="{:04X}" unicode="#x{:04X}">'.format(
+                        ebcode, u))
+            
                 if eblow < 0x7e:
                     eblow += 1
                 else:
                     eblow = 0x21
                     ebhigh += 1
             if not first:
-                ffp.write("</fontData>\n")
-                ffp.write("</fontSet>\n")
+                self.hgaiji_data.append("</fontData>")
+                self.hgaiji_data.append("</fontSet>")
         
         first = True
-        hg_start_unicode = unicode_
-        hg_start_ebhigh = ebhigh + 1
-        with open(HGAIJI_FILE, "r", encoding='cp932') as fp:
-            unicode_ = hg_start_unicode
-            ebhigh = hg_start_ebhigh
+        self.zg_start_unicode = unicode_
+        zg_start_ebhigh = ebhigh + 1
+        with open(ZGAIJI_FILE, "r", encoding='cp932') as fp:
+            ebhigh = zg_start_ebhigh
             eblow = 0x21
             for line in fp:
-                if len(line) == 0 or line[0] == " " or line[0] == "#":
-                    ffp.write(line + '\n')
+                if len(line) == 0 or line[0] in (" ", "#", "."):
+                    self.zgaiji_data.append(line)
                     continue
-                m = FONTSET_START_RE.match(line)
+                
+                m = self.FONTSET_START_RE.match(line)
                 if m:
-                    hg_orig_ebhigh = int(m.group(1), 16)
-                    hg_orig_eblow = int(m.group(2), 16)
+                    ebhigh = int(m.group(1), 16)
+                    eblow = int(m.group(2), 16)
                 if not line.startswith("<fontData"):
                     continue
+                
+                ebcode = ebhigh*256 + eblow
                 if first:
-                    ffp.write('<fontSet size="8X16" ' +
-                              'start="{:02X}{:02X}">\n'.format(ebhigh, eblow))
+                    self.zgaiji_data.append(
+                        '<fontSet size="16X16" start="{:04X}">'.format(ebcode))
                     first = False
                 else:
-                    ffp.write("</fontData>\n")
-                ffp.write(('<fontData ebcode="{:02X}{:02X}" ' +
-                           'unicode="#x{:04X}">\n').format(
-                               ebhigh, eblow, unicode_))
-                mfp.write(('<gaijiMap unicode="#x{:04X}" ' +
-                           'ebcode="{:02X}{:02X}"/>\n').format(
-                               unicode_, ebhigh, eblow))
-                unicode_ += 1
+                    self.zgaiji_data.append("</fontData>")
+                if ebcode not in self.zgaiji2uni:
+                    self.zgaiji2uni[ebcode] = unicode_
+                    unicode_ += 1
+                u = self.zgaiji2uni[ebcode]
+                self.zgaiji_data.append(
+                    '<fontData ebcode="{:04X}" unicode="#x{:04X}">'.format(
+                        ebcode, u))
                 if eblow < 0x7e:
                     eblow += 1
                 else:
                     eblow = 0x21
                     ebhigh += 1
             if not first:
-                ffp.write("</fontData>\n")
-                ffp.write("</fontSet>\n")
-        ffp.write("</gaijiData>\n")
-        mfp.write("</gaijiSet>\n")
+                self.zgaiji_data.append("</fontData>")
+                self.zgaiji_data.append("</fontSet>")
+    
+    def create_file(self, gaiji_file, gaijimap_file):
+        with open(gaiji_file, "w", encoding='cp932') as ffp:
+            ffp.write('<?xml version="1.0" encoding="Shift_JIS"?>\n')
+            ffp.write('<gaijiData xml:space="preserve">\n')
+            ffp.write('\n'.join(self.hgaiji_data))
+            ffp.write('\n')
+            ffp.write('\n'.join(self.zgaiji_data))
+            ffp.write("\n</gaijiData>\n")
+        
+        with open(gaijimap_file, "w", encoding="cp932") as mfp:
+            mfp.write('<?xml version="1.0" encoding="Shift_JIS"?>\n')
+            mfp.write("<gaijiSet>\n")
+            for ebcode in sorted(self.hgaiji2uni.keys()):
+                mfp.write(
+                    '<gaijiMap unicode="#x{:04X}" ebcode="{:04X}"/>\n'.format(
+                        self.hgaiji2uni[ebcode], ebcode))
+            for ebcode in sorted(self.zgaiji2uni.keys()):
+                mfp.write(
+                    '<gaijiMap unicode="#x{:04X}" ebcode="{:04X}"/>\n'.format(
+                        self.zgaiji2uni[ebcode], ebcode))
+            mfp.write("</gaijiSet>\n")
+
+gaiji = None
+def generate_gaiji_file():
+    '''外字ダンプファイルからGaiji.xmlとGaijiMap.xmlを作る'''
+    global gaiji
+
+    message("外字ファイルを生成しています... ")
+    mapfile = base_path / (book_dir + ".map")
+    if mapfile.exists():
+        message("mapfile 読み込み... ")
+        gaiji = Gaiji(mapfile.resolve())
+    else:
+        gaiji = Gaiji()
+    gaiji.load(ZGAIJI_FILE, HGAIJI_FILE)
+    gaiji.create_file(base_path / GFONT_FILE, base_path / GMAP_FILE)
     message("終了しました\n")
 
 def gstr(s, halfwidth):
     '''文字列を外字のUnicode表記に変換する'''
-    global hg_start_unicode, hg_orig_ebhigh, hg_orig_eblow
-    global zg_start_unicode, zg_orig_ebhigh, zg_orig_eblow
+    global gaiji
     
     if s[0] == '<':
         s = s[1:]
@@ -229,20 +280,14 @@ def gstr(s, halfwidth):
     low = int(s[2:4], 16)
     if high < 0xa1:
         return "&#x{:02X};&#x{:02X};".format(high, low)
-    
-    if halfwidth:
-        code = hg_start_unicode
-        if low < hg_orig_eblow:
-            low += 94
-            high -= 1
-        code += (high - hg_orig_ebhigh) * 94 + (low - hg_orig_eblow)
-    else:
-        code = zg_start_unicode
-        if low < zg_orig_eblow:
-            low += 94
-            high -= 1
-        code += (high - zg_orig_ebhigh) * 94 + (low - zg_orig_eblow)
-    return "&#x{:04X};".format(code)
+
+    ebcode = high * 0x100 + low
+    code = gaiji.to_unicode(ebcode, halfwidth)
+    if code == 0:
+        raise Exception()
+    if 0xe000 <= code <= 0xf8ff:
+        return "&#x{:04X};".format(code)
+    return chr(code)
 
 def conv_title(s):
     '''見出し文字列を変換する'''
@@ -1000,7 +1045,7 @@ def parse_ini_file():
     if len(book_dir):
         message("書籍ディレクトリ名が8バイトを超えています\n")
         for c in book_dir:
-            if c not in string.upper + string.digit + "_":
+            if c not in string.ascii_uppercase + string.digits + "_":
                 message("書籍ディレクトリ名に不正な文字(A-Z0-9_以外)" +
                         "が含まれています\n")
     html_file = Path(book_dir + ".html")
