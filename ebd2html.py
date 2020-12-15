@@ -9,6 +9,7 @@ import os
 import re
 import configparser
 import string
+import struct
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
@@ -94,6 +95,7 @@ HGAIJI_FILE = "hgaiji.txt" # 半角16ドット外字ダンプデータ
 GFONT_FILE = "Gaiji.xml" # EBStudio用外字マップファイル
 GMAP_FILE = "GaijiMap.xml" # EBStudio用外字フォント
 HONMON_FILE = "honmon.txt" # 本文ダンプデータ
+HONMON_BIN = "honmon"      # 本文データそのもの
 INI_FILE = "ebd2html.ini" # ebd2html設定ファイル
 
 base_path = None   # EBStudio基準ディレクトリ
@@ -117,6 +119,7 @@ gen_kana = False       # かなインデックスを作る
 gen_hyoki = False      # 表記インデックスを作る
 gen_alpha = False      # 英字インデックスを作る
 have_auto_kana = False # auto_kana検索語がある
+remove_sound = False   # 音声を削除する
 
 class Gaiji:
     FONTSET_START_RE = re.compile(
@@ -404,7 +407,7 @@ def convert_title_data(fp):
     '''見出しデータを変換する'''
     firsterr = True
     result = {}
-    TITLE_RE = re.compile(r'\[([\da-fA-F]+):( *[\da-fA-F]+)\]')
+    TITLE_RE = re.compile(r'^\[([\da-fA-F]+):(\s*[\da-fA-F]+)\](.*)$')
     
     for line in fp:
         line = line.rstrip('\r\n')
@@ -416,11 +419,10 @@ def convert_title_data(fp):
                 write_log("\n")
                 firsterr = False
             write_log("不正な見出し行: " + line + "\n")
-            continue
         tblk = int(m.group(1), 16)
         tpos = int(m.group(2), 16)
+        line = m.group(3)
         
-        line = line[line.index(']')+1:]
         if (line == '' or
             line.startswith("<1F02>") or line.startswith("<1F03>")):
             continue
@@ -550,7 +552,7 @@ def read_honmon_data(fp):
     if line == '':
         return None
     line = line.rstrip('\r\n')
-    m = re.search(r"^\[([\da-fA-F]+): *([\da-fA-F]+)\](.*)$", line)
+    m = re.search(r"^\[([\da-fA-F]+):\s*([\da-fA-F]+)\](.*)$", line)
     if m is None:
         return {
             'dblk': 0,
@@ -600,6 +602,68 @@ def compare_position(ip, dp):
     if ipos > dpos:
         return 1
     return 0
+
+SOUND_TAG_RE = re.compile(
+    r'^<1F4A><([\dA-F]{4})><([\dA-F]{4})>' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
+    r'(.*?)<1F6A>')
+
+def sound_tag(s):
+    if remove_sound:
+        return ""
+    
+    m = SOUND_TAG_RE.match(s)
+    if m is None:
+        raise Exception()
+    
+    sndmode = m.group(1)
+    sndtype = m.group(2)
+    sblk = int(m.group(3), 16)
+    spos = int(m.group(4), 16)
+    eblk = int(m.group(5), 16)
+    epos = int(m.group(6), 16)
+    alttext = m.group(7)
+    
+    if sndmode[3] != '1': # 簡易PCM以外
+        return "[音声]"
+    honmon = base_path / HONMON_BIN
+    if not honmon.exists():
+        return "[音声]"
+    
+    wavefile = base_path / "sounds" / "{:08X}{:04X}.wav".format(sblk, spos)
+    if not wavefile.parent.exists():
+        wavefile.parent.mkdir()
+
+    with open(honmon, 'rb') as f:
+        f.seek(sblk*2048 + spos)
+        bindata = f.read((eblk - sblk)*2048 + epos - spos)
+
+    if sndtype[1] == '1': # header無し
+        filesize = len(bindata) + 44
+        chns = 2 if sndtype[0] == '1' else 1
+        bits = 8 if sndtype[2] == '1' else 16
+        if sndtype[3] == '0':
+            sample_sec = 44100
+        elif sndtype[3] == '1':
+            sample_sec = 22050
+        elif sndtype[3] == '2':
+            sample_sec = 11025
+        else:
+            raise Exception()
+        header = struct.pack(
+            '<4sI4s4sIHHIIHH4sI',
+            b'RIFF', filesize - 8, b'WAVE',
+            b'fmt ', 16, 1, chns,
+            sample_sec, int((chns * bits * sample_sec + 7)// 8),
+            int((chns * bits + 7)// 8), bits,
+            b'data', filesize - 126)
+        bindata = header + bindata
+        
+    with open(wavefile, 'wb') as f:
+        f.write(bindata)
+    return '<object data="{}">{}</object>'.format(
+        wavefile.resolve(), alttext)
 
 def conv_honmon(s):
     '''本文データを変換する'''
@@ -681,8 +745,7 @@ def conv_honmon(s):
                 s = s[s.index("<1F64>"):]
                 s = s[s.index("]")+1:]
             elif tag == "<1F4A>": # 1F4A ... 1F6A: 音声参照 
-                # "[音声]"で置き換える
-                result += "[音声]"
+                result += sound_tag(s)
                 s = s[s.index("<1F6A>")+6:]
             elif (tag == "<1F45>" or # 1F45 ... 1F65: 図版見出し 
                   tag == "<1F4B>" or # 1F4B ... 1F6B: カラー画像データ群参照 
@@ -1015,11 +1078,11 @@ def generate_ebx_file():
       </source>
       <bookTitle>{book_title}</bookTitle>
       <dirName>{book_dir}</dirName>
-      <bookTypeID>{book_type:02X}</bookTypeID>
+      <bookTypeID>{book_type}</bookTypeID>
       <complexDef />
       <copyright />
       <gaijiMap>$(BASE)/GaijiMap.xml</gaijiMap>
-      <gaijiFont>$(BASE)/GaijiFont.xml</gaijiFont>
+      <gaijiFont>$(BASE)/Gaiji.xml</gaijiFont>
       <indexFile />
       <g8x16>GAI16H00</g8x16>
       <g16x16>GAI16F00</g16x16>
@@ -1088,22 +1151,23 @@ def generate_ebx_file():
     <pdicHonbun>0</pdicHonbun>
     <pdicYorei>0</pdicYorei>
     <maxStringT>32000000</maxStringT>
+    <autoUniGaiji>false</autoUniGaiji>
   </convertOpt>
 </BookSet>
 '''.format(
     html_file=html_file,
     book_title=book_title,
     book_dir=book_dir,
-    book_type=BOOK_TYPE.get(book_type, 90),
+    book_type=BOOK_TYPE.get(book_type, 0x90),
     base_path=base_path,
     out_path=out_path,
-    eb_type=eb_type,
+    eb_type=eb_type+1,
     index_def=index_def))
     message("終了しました\n")
 
 def parse_ini_file():
     '''設定ファイルを読み込む'''
-    global base_path, out_path, auto_kana
+    global base_path, out_path, auto_kana, remove_sound
     global eb_type, book_title, book_type, book_dir
     global html_file, ebx_file
 
@@ -1112,6 +1176,7 @@ def parse_ini_file():
     base_path = Path(config['DEFAULT']['BASEPATH'])
     out_path = Path(config['DEFAULT']['OUTPATH'])
     auto_kana = config['DEFAULT'].getboolean('AUTOKANA')
+    remove_sound = config['DEFAULT'].getboolean('REMOVESOUND')
     eb_type = int(config['DEFAULT']['EBTYPE'])
     book_title = config['DEFAULT']['BOOKTITLE']
     book_type = config['DEFAULT']['BOOKTYPE']
