@@ -30,7 +30,7 @@ BOOK_TYPE = {
 }
 
 LOG_FILE = "ebd2html.log" # ログファイル
-MAX_WORD = 256            # 単語の最大長
+MAX_WORD = 128            # 単語の最大長
 
 # 2バイト記号→1バイト記号変換表(0x8140～0x8197)
 ZEN2HAN = {
@@ -79,7 +79,7 @@ def message(s):
 
 # -------------------- メイン --------------------
 
-MAX_HLINE = 256 # HTMLファイルのおよその最大長
+MAX_HLINE = 128 # HTMLファイルのおよその最大長
 
 FKINDEX_FILE = "fkindex.txt" # かなインデックスダンプデータ
 FKTITLE_FILE = "fktitle.txt" # かな見出しダンプデータ
@@ -608,10 +608,9 @@ SOUND_TAG_RE = re.compile(
     r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
     r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
     r'(.*?)<1F6A>')
-
 def sound_tag(s):
     if remove_sound:
-        return ""
+        return "[音声]"
     
     m = SOUND_TAG_RE.match(s)
     if m is None:
@@ -664,6 +663,89 @@ def sound_tag(s):
         f.write(bindata)
     return '<object data="{}">{}</object>'.format(
         wavefile.resolve(), alttext)
+
+IMAGE_MONO_TAG_RE = re.compile(
+    r'^<1F44><0001><([\dA-F]{4})><([\dA-F]{4})>' +
+    r'(.*?)<1F6A>' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]')
+IMAGE_COLOR_TAG_RE = re.compile(
+    r'^<1F4([5BCDF])>' +
+    r'<([\dA-F]{4})><[\dA-F]{4}><[\dA-F]{4}><[\dA-F]{4}>'
+    r'<([\dA-F]{4})><([\dA-F]{4})>' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]' +
+    r'\[([\dA-Fa-f]+):\s*([\dA-Fa-f]+)\]'
+    r'(.*?)<1F6\1>')
+
+def image_tag(s):
+    if remove_image:
+        return "[図版]"
+
+    if s.startswith('<1F44>'):
+        m = IMAGE_MONO_TAG_RE.match(s)
+        if m is None:
+            raise Exception()
+        width = int(m.group(1))
+        height = int(m.group(2))
+        alttext = m.group(3)
+        sblk = int(m.group(4), 16)
+        spos = int(m.group(5), 16)
+        inline = False
+        fileext = 'bmp'
+
+        rowsize = int((width + 7) // 8)
+        bmprowsize = int((rowsize + 3) // 4)
+        filesize = rowsize * height + 40 + 14 + 8
+
+        # 1bit BMP 組立
+        bindata = struct.pack(
+            '<2sIHHIIIIHHIIIIIIBBBBBBBB',
+            b'BM', filesize, 0, 0, 40+14+8,
+            40, widht, height, 1, 1, 0, bmprowsize,
+            3780, 3780, 0, 0, 255, 255, 255, 0, 0, 0, 0, 0)
+        with open(honmon, 'rb') as f:
+            for i in range(height):
+                f.seek(sblk*2048 + spos + rowsize * (height - i - 1))
+                for c in f.read(rowsize):
+                    bindata += c ^ 0xff
+                if bmprowsize != rowsize:
+                    bindata += b'\x00' * (bmprowsize - rowsize)
+    else:
+        m = IMAGE_COLOR_TAG_RE.match(s)
+        if m is None:
+            raise Exception()
+        imgmode = m.group(2)
+        width = m.group(3)
+        height = m.group(4)
+        sblk = int(m.group(5), 16)
+        spos = int(m.group(6), 16)
+        alttext = m.group(7)
+        inline = False
+        
+        if imgmode[0] == '0':
+            fileext = 'bmp'
+        elif imgmode[0] == '1':
+            fileext = 'jpg'
+        else:
+            raise Exception()
+        if imgmode[3] == '9':
+            inline = True
+        
+        with open(honmon, 'rb') as f:
+            f.seek(sblk*2048 + spos)
+            mark, size = struct.unpack('<4sI', f.read(8))
+            if mark != 'data':
+                raise Exception()
+            bindata = f.read(size)
+
+    imagefile = base_path / "images" / "{:08X}{:04X}.{}".format(
+        sblk, spos, fileext)
+    if not imagefile.parent.exists():
+        imagefile.parent.mkdir()
+    with open(wavefile, 'wb') as f:
+        f.write(bindata)
+    return '<img src="{}" alt="{}" {} />'.format(
+        imagefile.resolve(), alttext, 'inline="true"' if inline else "")
 
 def conv_honmon(s):
     '''本文データを変換する'''
@@ -740,8 +822,7 @@ def conv_honmon(s):
                     dblk, dpos, conv_honmon(text))
                 s = m.group(3)
             elif tag == "<1F44>": # 1F44 ... 1F64[xx:yy]: 図版参照
-                # "[図版]"で置き換える
-                result += "[図版]"
+                result += image_tag(s)
                 s = s[s.index("<1F64>"):]
                 s = s[s.index("]")+1:]
             elif tag == "<1F4A>": # 1F4A ... 1F6A: 音声参照 
@@ -752,9 +833,8 @@ def conv_honmon(s):
                   tag == "<1F4C>" or # 1F4C ... 1F6C: カラー画面データ群参照 
                   tag == "<1F4D>" or # 1F4D ... 1F6D: カラー画面表示 
                   tag == "<1F4F>"):  # 1F4F ... 1F6F: カラー画面参照 
-                # "[図版]"で置き換える
                 endtag = "<1F6{}>".format(tag[4])
-                result += "[図版]"
+                result += image_tag(s)
                 s = s[s.index(endtag)+6:]
             elif tag == "<1F61>": # 1F61: 検索キー終了 
                 s = s[6:]
