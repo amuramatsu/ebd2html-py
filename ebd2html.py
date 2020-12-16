@@ -345,13 +345,13 @@ def conv_title(s):
         s = s[1:]
     return result
 
+INDEX_RE = re.compile(r"\[(\d+)\]\t" +
+                      r"\[([\da-fA-F]+):([\da-fA-F]+)\]" +
+                      r"\[([\da-fA-F]+):([\da-fA-F]+)\]")
 def convert_index_data(ifp):
     '''インデックスデータを変換する'''
     firsterr = True
     complex = False
-    INDEX_RE = re.compile(r"\[(\d+)\]\t" +
-                          r"\[([\da-fA-F]+):([\da-fA-F]+)\]" +
-                          r"\[([\da-fA-F]+):([\da-fA-F]+)\]")
     for line in ifp:
         if not line.startswith("ID="):
             continue
@@ -405,11 +405,11 @@ def convert_index_data(ifp):
         })
     return pd.DataFrame(result)
 
+TITLE_RE = re.compile(r'^\[([\da-fA-F]+):(\s*[\da-fA-F]+)\](.*)$')
 def convert_title_data(fp):
     '''見出しデータを変換する'''
     firsterr = True
     result = {}
-    TITLE_RE = re.compile(r'^\[([\da-fA-F]+):(\s*[\da-fA-F]+)\](.*)$')
     
     for line in fp:
         line = line.rstrip('\r\n')
