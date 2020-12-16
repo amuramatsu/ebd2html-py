@@ -119,7 +119,9 @@ gen_kana = False       # かなインデックスを作る
 gen_hyoki = False      # 表記インデックスを作る
 gen_alpha = False      # 英字インデックスを作る
 have_auto_kana = False # auto_kana検索語がある
-remove_sound = False   # 音声を削除する
+remove_sound = True    # 音声を削除する
+remove_image = True    # 図版を削除する
+use_utf8 = True        # html を utf-8出力する
 
 class Gaiji:
     FONTSET_START_RE = re.compile(
@@ -299,7 +301,7 @@ def gstr(s, halfwidth):
     code = gaiji.to_unicode(ebcode, halfwidth)
     if code == 0:
         raise Exception()
-    if 0xe000 <= code <= 0xf8ff:
+    if not use_utf8 or 0xe000 <= code <= 0xf8ff:
         return "&#x{:04X};".format(code)
     return chr(code)
 
@@ -494,17 +496,19 @@ def generate_work_file():
 def html_newfile():
     '''HTMLファイルを新規作成する'''
 
+    charset = 'utf-8' if use_utf8 else 'cp932'
+    webchar = 'utf-8' if use_utf8 else 'x-sjis'
     filename = base_path / html_file
-    fp = open(filename, 'w', encoding='utf-8')
+    fp = open(filename, 'w', encoding=charset)
     fp.write("""<html>
 <head>
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset={}">
 <meta name="GENERATOR" content="{} {} {}">
 <title>Dictionary</title>
 </head>
 <body>
 <dl>
-""".format(PROGNAME, __VERSION__, __DATE__))
+""".format(webchar, PROGNAME, __VERSION__, __DATE__))
     return fp
 
 def html_close(fp):
@@ -888,7 +892,15 @@ def conv_honmon(s):
     # 最後の<br />は捨てる
     if result.endswith('<br />'):
         result = result[:-6]
-    return result.replace("\uff5e", "\u301c") # 全角チルダを波ダッシュに置換
+    if use_utf8:
+        # 全角チルダを波ダッシュに置換
+        result = result.replace("\uff5e", "\u301c")
+        # °記号がおかしくなるのでコード埋め込み
+        result = result.replace("\u00b0", "<X4081>216B</X4081>")
+    else:
+        # 全角チルダを使う
+        result = result.replace("\u301c", "\uff5e")
+    return result
 
 def get_title(s):
     '''「1F41 xxxx ～ 1F61」または「1F41 xxxx 1F61 1FE0 xxxx ～ 1FE1」で
@@ -1144,7 +1156,7 @@ def generate_ebx_file():
         index_def |= 0x0a
 
     with open(base_path / ebx_file, "w", encoding='utf-8') as f:
-        message("EBSファイルを生成しています... ")
+        message("EBXファイルを生成しています... ")
         f.write('''<?xml version="1.0"?>
 <BookSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <booklist>
@@ -1239,8 +1251,8 @@ def generate_ebx_file():
     book_title=book_title,
     book_dir=book_dir,
     book_type=BOOK_TYPE.get(book_type, 0x90),
-    base_path=base_path,
-    out_path=out_path,
+    base_path=Path(base_path).resolve(),
+    out_path=Path(out_path).resolve(),
     eb_type=eb_type+1,
     index_def=index_def))
     message("終了しました\n")
