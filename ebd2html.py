@@ -1113,14 +1113,15 @@ def generate_html_file():
                         fp.write("{}{}".format(istr2, buf))
                     else:
                         fp.write(" ")
+                    needbr = False
                 else:
                     fp.write("{}{}{}{}".format(istr, tbuf, istr2, buf))
+                    needbr = True
 
                 have_indent = False
                 have_indent2 = False
                 istr = ""
                 istr2 = ""
-                needbr = True
                 continue
 
             if needbr:
