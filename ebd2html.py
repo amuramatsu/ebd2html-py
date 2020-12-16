@@ -888,7 +888,7 @@ def conv_honmon(s):
     # 最後の<br />は捨てる
     if result.endswith('<br />'):
         result = result[:-6]
-    return result
+    return result.replace("\uff5e", "\u301c") # 全角チルダを波ダッシュに置換
 
 def get_title(s):
     '''「1F41 xxxx ～ 1F61」または「1F41 xxxx 1F61 1FE0 xxxx ～ 1FE1」で
