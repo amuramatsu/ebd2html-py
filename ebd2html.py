@@ -1109,7 +1109,7 @@ def generate_html_file():
 
                 if yield_dt:
                     fp.write("<dd><p>\n")
-                    if tbuf == "" and buf == "":
+                    if tbuf != "" and buf != "":
                         fp.write("{}{}".format(istr2, buf))
                     else:
                         fp.write(" ")
